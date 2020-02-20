@@ -290,7 +290,7 @@ public class GridCachePartitionExchangeManager<K, V> extends GridCacheSharedMana
     private volatile HistogramMetric blockingDurationHistogram;
 
     /** Delay before rebalancing code is start executing after exchange completion. For tests only. */
-    private volatile long rebalanceDelay;
+    private volatile long rebalanceDelay = 500;
 
     /** */
     private final boolean bltForInMemoryCachesSupport = isFeatureEnabled(IGNITE_BASELINE_FOR_IN_MEMORY_CACHES_FEATURE);
