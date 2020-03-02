@@ -312,12 +312,12 @@ public class GridDhtPartitionDemander {
                 return null;
             }
 
-            if (!force && (!oldFut.isDone() || oldFut.result()) && oldFut.compatibleWith(assignments)) {
-                if (!oldFut.isDone())
-                    compatibleRebFut.add(oldFut);
-
-                return null;
-            }
+//            if (!force && (!oldFut.isDone() || oldFut.result()) && oldFut.compatibleWith(assignments)) {
+//                if (!oldFut.isDone())
+//                    compatibleRebFut.add(oldFut);
+//
+//                return null;
+//            }
 
             final RebalanceFuture fut = new RebalanceFuture(grp, assignments, log, rebalanceId, next);
 

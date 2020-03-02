@@ -397,6 +397,8 @@ public class CacheLoadingConcurrentGridStartSelfTest extends GridCommonAbstractT
             fut.get();
         }
 
+        awaitPartitionMapExchange();
+
         assertCacheSize(getKeysCnt());
     }
 
