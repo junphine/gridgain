@@ -336,6 +336,15 @@ namespace ignite
                     return false;
                 }
 
+                if (propVer >= VERSION_1_6_0)
+                {
+                    int32_t len = reader.ReadInt8Array(0, 0);
+                    std::vector<int8_t> features;
+
+                    features.resize(static_cast<size_t>(len));
+                    reader.ReadInt8Array(features.data(), len);
+                }
+
                 if (propVer >= VERSION_1_4_0)
                 {
                     Guid nodeGuid = reader.ReadGuid();

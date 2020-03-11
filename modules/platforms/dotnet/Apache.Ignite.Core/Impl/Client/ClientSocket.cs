@@ -413,6 +413,11 @@ namespace Apache.Ignite.Core.Impl.Client
 
                 if (success)
                 {
+                    if (version >= Ver160)
+                    {
+                        BinaryUtils.Marshaller.Unmarshal<byte[]>(stream);
+                    }
+                    
                     if (version >= Ver140)
                     {
                         ServerNodeId = BinaryUtils.Marshaller.Unmarshal<Guid>(stream);
