@@ -80,6 +80,9 @@ public class ClientRequestHandler implements ClientListenerRequestHandler {
     @Override public void writeHandshake(BinaryWriterExImpl writer) {
         writer.writeBoolean(true);
 
+        if (protocolContext.isFeaturesSupported())
+            writer.writeByteArray(protocolContext.featureBytes());
+
         if (protocolContext.isPartitionAwarenessSupported())
             writer.writeUuid(ctx.kernalContext().localNodeId());
     }

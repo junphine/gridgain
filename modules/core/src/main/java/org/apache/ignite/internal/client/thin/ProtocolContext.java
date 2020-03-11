@@ -14,119 +14,110 @@
  * limitations under the License.
  */
 
-package org.apache.ignite.internal.processors.platform.client;
+package org.apache.ignite.internal.client.thin;
 
 import java.util.EnumSet;
-import org.apache.ignite.internal.ThinProtocolFeature;
-import org.apache.ignite.internal.processors.odbc.ClientListenerProtocolVersion;
 
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_1_0;
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_2_0;
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_3_0;
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_4_0;
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_5_0;
-import static org.apache.ignite.internal.processors.platform.client.ClientConnectionContext.VER_1_6_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_1_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_2_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_3_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_4_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_5_0;
+import static org.apache.ignite.internal.client.thin.ProtocolVersion.V1_6_0;
 
 /**
- * Protocol context for JDBC protocol. Holds protocol version and supported features.
+ * Protocol Context.
  */
-public class ClientProtocolContext {
+public class ProtocolContext {
     /** Protocol version. */
-    private final ClientListenerProtocolVersion ver;
+    private final ProtocolVersion ver;
 
     /** Features. */
-    private final EnumSet<ClientFeature> features;
+    private final EnumSet<ProtocolFeature> features;
 
     /**
      * @param ver Protocol version.
      * @param features Supported features.
      */
-    public ClientProtocolContext(ClientListenerProtocolVersion ver, EnumSet<ClientFeature> features) {
+    public ProtocolContext(ProtocolVersion ver, EnumSet<ProtocolFeature> features) {
         this.ver = ver;
         this.features = features;
     }
 
     /**
-     * @return {@code true} if protocol features supported.
+     * @return {@code true} if protocol feature mask is supported.
      */
     public boolean isFeaturesSupported() {
-        return ver.compareTo(VER_1_6_0) >= 0;
+        return ver.compareTo(V1_6_0) >= 0;
     }
 
     /**
      * @return {@code true} if expiration policy supported.
      */
     public boolean isExpirationPolicySupported() {
-        return ver.compareTo(VER_1_5_0) >= 0;
+        return ver.compareTo(V1_5_0) >= 0;
     }
 
     /**
      * @return {@code true} if partition awareness supported.
      */
     public boolean isPartitionAwarenessSupported() {
-        return ver.compareTo(VER_1_4_0) >= 0;
+        return ver.compareTo(V1_4_0) >= 0;
     }
 
     /**
      * @return {@code true} if idle timeout supported.
      */
     public boolean isIdleTimeoutSupported() {
-        return ver.compareTo(VER_1_3_0) >= 0;
+        return ver.compareTo(V1_3_0) >= 0;
     }
 
     /**
      * @return {@code true} if handshake timeout supported.
      */
     public boolean isHandshakeTimeoutSupported() {
-        return ver.compareTo(VER_1_3_0) >= 0;
+        return ver.compareTo(V1_3_0) >= 0;
     }
 
     /**
      * @return {@code true} if lazy memory allocation supported.
      */
     public boolean isLazyMemoryAllocationSupported() {
-        return ver.compareTo(VER_1_3_0) >= 0;
+        return ver.compareTo(V1_3_0) >= 0;
     }
 
     /**
      * @return {@code true} if query entity precision and scale supported.
      */
     public boolean isQueryEntityPrecisionAndScaleSupported() {
-        return ver.compareTo(VER_1_2_0) >= 0;
+        return ver.compareTo(V1_2_0) >= 0;
     }
 
     /**
      * @return {@code true} if encryption configuration supported.
      */
     public boolean isEncryptionConfigurationSupported() {
-        return ver.compareTo(VER_1_2_0) >= 0;
+        return ver.compareTo(V1_2_0) >= 0;
     }
 
     /**
      * @return {@code true} if authorization supported.
      */
     public boolean isAuthorizationSupported() {
-        return ver.compareTo(VER_1_1_0) >= 0;
+        return ver.compareTo(V1_1_0) >= 0;
     }
 
     /**
      * @return Supported features.
      */
-    public EnumSet<ClientFeature> features() {
+    public EnumSet<ProtocolFeature> features() {
         return features;
-    }
-
-    /**
-     * @return Supported features as byte array.
-     */
-    public byte[] featureBytes() {
-        return ThinProtocolFeature.featuresAsBytes(features);
     }
 
     /**
      * @return Protocol version.
      */
-    public ClientListenerProtocolVersion version() {
+    public ProtocolVersion version() {
         return ver;
     }
 }
