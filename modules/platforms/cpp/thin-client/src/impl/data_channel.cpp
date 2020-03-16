@@ -341,8 +341,11 @@ namespace ignite
                     int32_t len = reader.ReadInt8Array(0, 0);
                     std::vector<int8_t> features;
 
-                    features.resize(static_cast<size_t>(len));
-                    reader.ReadInt8Array(features.data(), len);
+                    if (len > 0)
+                    {
+                        features.resize(static_cast<size_t>(len));
+                        reader.ReadInt8Array(features.data(), len);
+                    }
                 }
 
                 if (propVer >= VERSION_1_4_0)
