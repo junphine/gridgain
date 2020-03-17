@@ -69,7 +69,7 @@ public final class GridTestProperties {
     private static final Pattern PROP_REGEX = Pattern.compile("[@$]\\{[^@${}]+\\}");
 
     /** */
-    private static final Map<String, String> dfltProps;
+    private static final Map<String, String> dfltProps = null;
 
     /** */
     private static final Map<String, Map<String, String>> pathProps = new HashMap<>();
@@ -98,12 +98,12 @@ public final class GridTestProperties {
         U.getIgniteHome();
 
         // Load default properties.
-        File cfgFile = getTestConfigurationFile(null, TESTS_PROP_FILE);
+        //File cfgFile = getTestConfigurationFile(null, TESTS_PROP_FILE);
 
-        assert cfgFile != null && cfgFile.exists();
-        assert !cfgFile.isDirectory();
+        //assert cfgFile != null && cfgFile.exists();
+        //assert !cfgFile.isDirectory();
 
-        dfltProps = Collections.unmodifiableMap(loadFromFile(new HashMap<>(), cfgFile));
+        //dfltProps = Collections.unmodifiableMap(loadFromFile(new HashMap<>(), cfgFile));
 
         if ("false".equals(System.getProperty("IGNITE_TEST_PROP_DISABLE_LOG4J", "false"))) {
             String user = System.getProperty("user.name");
@@ -118,15 +118,15 @@ public final class GridTestProperties {
     /**
      * Ensure singleton.
      */
-    private GridTestProperties() {
+/*    private GridTestProperties() {
         // No-op.
-    }
+    }*/
 
     /**
      * @param user User name.
      */
     private static void configureLog4j(String user) {
-        String cfgFile = System.getProperty("IGNITE_TEST_PROP_LOG4J_FILE");
+/*        String cfgFile = System.getProperty("IGNITE_TEST_PROP_LOG4J_FILE");
 
         if (cfgFile == null)
             cfgFile = "log4j-test.xml";
@@ -138,7 +138,7 @@ public final class GridTestProperties {
 
         DOMConfigurator.configure(log4jFile.getAbsolutePath());
 
-        System.out.println("Configured log4j from: " + log4jFile);
+        System.out.println("Configured log4j from: " + log4jFile);*/
     }
 
     /** */
@@ -199,13 +199,13 @@ public final class GridTestProperties {
             props = new HashMap<>();
 
             // Load default properties.
-            props.putAll(dfltProps);
+            //props.putAll(dfltProps);
 
             // Load properties from specified folder
             // potentially overriding defaults.
-            loadProperties(props, dir);
+           // loadProperties(props, dir);
 
-            pathProps.put(dir, props);
+            //pathProps.put(dir, props);
         }
 
         return props;
