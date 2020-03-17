@@ -17,6 +17,7 @@
 package org.apache.ignite.internal.processors.cache.persistence.pagemem;
 
 import java.nio.ByteBuffer;
+import java.util.Collection;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
@@ -130,20 +131,6 @@ public interface PageMemoryEx extends PageMemory {
      * @param allowToReplace The sign which allows to replace pages from a checkpoint by page replacer.
      */
     public GridMultiCollectionWrapper<FullPageId> beginCheckpoint(IgniteInternalFuture allowToReplace) throws IgniteException;
-
-    /**
-     * Gets a collection of dirty page IDs since the last checkpoint and dirty pages with user data are presented. If a
-     * dirty page is being written after the checkpointing operation begun, the modifications will be written to a
-     * temporary buffer which will be flushed to the main memory after the checkpointing finished. This method must be
-     * called when no concurrent operations on pages are performed.
-     *
-     * @return Couple of collection of dirty page IDs and flag. The flag is {@code true}, if since last checkpoint at
-     * least one page with user data (not relates with system cache) became a dirty, and {@code false} otherwise.
-     * @throws IgniteException If checkpoint has been already started and was not finished.
-     * @param allowToReplace The sign which allows to replace pages from a checkpoint by page replacer.
-     */
-    public IgniteBiTuple<GridMultiCollectionWrapper<FullPageId>, Boolean> beginCheckpointEx(
-        IgniteInternalFuture allowToReplace) throws IgniteException;
 
     /**
      * Finishes checkpoint operation.

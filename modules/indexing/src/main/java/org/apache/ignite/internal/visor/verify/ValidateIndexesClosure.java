@@ -30,16 +30,17 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.IgniteException;
 import org.apache.ignite.IgniteInterruptedException;
 import org.apache.ignite.IgniteLogger;
 import org.apache.ignite.internal.GridKernalContext;
 import org.apache.ignite.internal.IgniteEx;
+import org.apache.ignite.internal.commandline.cache.IdleVerify;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
 import org.apache.ignite.internal.processors.cache.CacheObjectUtils;
 import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
@@ -70,6 +71,7 @@ import org.apache.ignite.internal.util.typedef.F;
 import org.apache.ignite.internal.util.typedef.T2;
 import org.apache.ignite.internal.util.typedef.T3;
 import org.apache.ignite.internal.util.typedef.X;
+import org.apache.ignite.internal.util.typedef.internal.SB;
 import org.apache.ignite.internal.util.typedef.internal.U;
 import org.apache.ignite.lang.IgniteCallable;
 import org.apache.ignite.resources.IgniteInstanceResource;
@@ -89,6 +91,9 @@ import static org.apache.ignite.internal.pagemem.PageIdAllocator.FLAG_IDX;
 import static org.apache.ignite.internal.pagemem.PageIdAllocator.INDEX_PARTITION;
 import static org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState.OWNING;
 import static org.apache.ignite.internal.util.IgniteUtils.error;
+import static org.apache.ignite.internal.processors.cache.verify.IdleVerifyUtility.IDLE_DATA_ALTERATION_MSG;
+import static org.apache.ignite.internal.processors.cache.verify.IdleVerifyUtility.compareUpdCounters;
+import static org.apache.ignite.internal.processors.cache.verify.IdleVerifyUtility.updCountersSnapshot;
 
 /**
  * Closure that locally validates indexes of given caches.
@@ -188,9 +193,11 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
     }
 
     /**
+     * Detect groups for further analysis.
      *
+     * @return Collection of group id.
      */
-    private VisorValidateIndexesJobResult call0() {
+    private Set<Integer> collectGroupIds() {
         Set<Integer> grpIds = new HashSet<>();
 
         Set<String> missingCaches = new HashSet<>();
@@ -199,24 +206,16 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
             for (String cacheName : cacheNames) {
                 DynamicCacheDescriptor desc = ignite.context().cache().cacheDescriptor(cacheName);
 
-                if (desc == null) {
+                if (desc == null)
                     missingCaches.add(cacheName);
-
-                    continue;
-                }
-
-                grpIds.add(desc.groupId());
+                else
+                    grpIds.add(desc.groupId());
             }
 
             if (!missingCaches.isEmpty()) {
-                StringBuilder strBuilder = new StringBuilder("The following caches do not exist: ");
+                String errStr = "The following caches do not exist: " + String.join(", ", missingCaches);
 
-                for (String name : missingCaches)
-                    strBuilder.append(name).append(", ");
-
-                strBuilder.delete(strBuilder.length() - 2, strBuilder.length());
-
-                throw new IgniteException(strBuilder.toString());
+                throw new IgniteException(errStr);
             }
         }
         else {
@@ -228,10 +227,18 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
             }
         }
 
-        List<Future<Map<PartitionKey, ValidateIndexesPartitionResult>>> procPartFutures = new ArrayList<>();
-        List<Future<Map<String, ValidateIndexesPartitionResult>>> procIdxFutures = new ArrayList<>();
-        List<T3<CacheGroupContext, GridDhtLocalPartition, Future<CacheSize>>> cacheSizeFutures = new ArrayList<>();
-        List<T3<GridCacheContext, Index, Future<T2<Throwable, Long>>>> idxSizeFutures = new ArrayList<>();
+        return grpIds;
+    }
+
+    /**
+     *
+     */
+    private VisorValidateIndexesJobResult call0() {
+        Set<Integer> grpIds = collectGroupIds();
+
+        /** Update counters per partiton per group. */
+        final T2<Set<Integer>, Map<Integer, Set<Map.Entry<Integer, Long>>>> partsWithCntrsPerGrp =
+            updCountersSnapshot(ignite, grpIds);
 
         List<T2<CacheGroupContext, GridDhtLocalPartition>> partArgs = new ArrayList<>();
         List<T2<GridCacheContext, Index>> idxArgs = new ArrayList<>();
@@ -283,11 +290,66 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
         totalPartitions = partArgs.size();
         totalIndexes = idxArgs.size();
 
+        List<Future<Map<PartitionKey, ValidateIndexesPartitionResult>>> procPartFutures = new ArrayList<>(partArgs.size());
+        List<Future<Map<String, ValidateIndexesPartitionResult>>> procIdxFutures = new ArrayList<>(idxArgs.size());
+
+        List<T3<CacheGroupContext, GridDhtLocalPartition, Future<CacheSize>>> cacheSizeFutures = new ArrayList<>(partArgs.size());
+        List<T3<GridCacheContext, Index, Future<T2<Throwable, Long>>>> idxSizeFutures = new ArrayList<>(idxArgs.size());
+
         for (T2<CacheGroupContext, GridDhtLocalPartition> t2 : partArgs)
-            procPartFutures.add(processPartitionAsync(t2.get1(), t2.get2()));
+            procPartFutures.add(processPartitionAsync(t2.get1(), t2.get2(), new Runnable() {
+                    @Override public void run() {
+                        List<Integer> diff = compareUpdCounters(ignite, partsWithCntrsPerGrp);
+
+                        SB sb = new SB();
+
+                        if (!diff.isEmpty()) {
+                            for (int grpId : diff) {
+                                if (sb.length() != 0)
+                                    sb.a(", ");
+                                else
+                                    sb.a("\"");
+
+                                DynamicCacheDescriptor desc = ignite.context().cache().cacheDescriptor(grpId);
+
+                                final CacheGroupContext grpCtx = ignite.context().cache().cacheGroup(desc == null ? grpId : desc.groupId());
+
+                                sb.a(grpCtx.cacheOrGroupName());
+                            }
+
+                            sb.a("\"");
+
+                            throw new GridNotIdleException(IDLE_DATA_ALTERATION_MSG + "[" + sb.toString() + "]");
+                        }
+                    }
+                }
+            ));
 
         for (T2<GridCacheContext, Index> t2 : idxArgs)
-            procIdxFutures.add(processIndexAsync(t2.get1(), t2.get2()));
+            procIdxFutures.add(processIndexAsync(t2.get1(), t2.get2(), new Runnable() {
+                @Override public void run() {
+                    List<Integer> diff = compareUpdCounters(ignite, partsWithCntrsPerGrp);
+
+                    SB sb = new SB();
+
+                    if (!diff.isEmpty()) {
+                        for (int grpId : diff) {
+                            if (sb.length() != 0)
+                                sb.a(", ");
+                            else
+                                sb.a("\"");
+
+                            DynamicCacheDescriptor desc = ignite.context().cache().cacheDescriptor(grpId);
+
+                            sb.a(desc.cacheName());
+                        }
+
+                        sb.a("\"");
+
+                        throw new GridNotIdleException(IDLE_DATA_ALTERATION_MSG + "[" + sb.toString() + "]");
+                    }
+                }
+            }));
 
         if (checkSizes) {
             for (T2<CacheGroupContext, GridDhtLocalPartition> partArg : partArgs) {
@@ -371,6 +433,9 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
      * @param grpIds Group ids.
      */
     private Map<Integer, IndexIntegrityCheckIssue> integrityCheckIndexesPartitions(Set<Integer> grpIds) {
+        if (!checkCrc)
+            return Collections.emptyMap();
+
         List<Future<T2<Integer, IndexIntegrityCheckIssue>>> integrityCheckFutures = new ArrayList<>(grpIds.size());
 
         Map<Integer, IndexIntegrityCheckIssue> integrityCheckResults = new HashMap<>();
@@ -382,51 +447,25 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
         DbCheckpointListener lsnr = null;
 
         try {
-            AtomicBoolean cpFlag = new AtomicBoolean();
+            for (Integer grpId: grpIds) {
+                final CacheGroupContext grpCtx = ignite.context().cache().cacheGroup(grpId);
 
-            if (db instanceof GridCacheDatabaseSharedManager) {
-                lsnr = new DbCheckpointListener() {
-                    @Override public void onMarkCheckpointBegin(Context ctx) {
-                        /* No-op. */
-                    }
+                if (grpCtx == null || !grpCtx.persistenceEnabled()) {
+                    integrityCheckedIndexes.incrementAndGet();
 
-                    @Override public void onCheckpointBegin(Context ctx) {
-                        if (ctx.hasUserPages())
-                            cpFlag.set(true);
-                    }
+                    continue;
+                }
 
-                    @Override public void beforeCheckpointBegin(Context ctx) throws IgniteCheckedException {
-                        /* No-op. */
-                    }
-                };
-
-                ((GridCacheDatabaseSharedManager)db).addCheckpointListener(lsnr);
-
-                if (IdleVerifyUtility.isCheckpointNow(db))
-                    throw new GridNotIdleException(IdleVerifyUtility.CLUSTER_NOT_IDLE_MSG);
-            }
-
-            if (checkCrc) {
-                for (Integer grpId : grpIds) {
-                    final CacheGroupContext grpCtx = ignite.context().cache().cacheGroup(grpId);
-
-                    if (grpCtx == null || !grpCtx.persistenceEnabled()) {
-                        integrityCheckedIndexes.incrementAndGet();
-
-                        continue;
-                    }
-
-                    Future<T2<Integer, IndexIntegrityCheckIssue>> checkFut =
+                Future<T2<Integer, IndexIntegrityCheckIssue>> checkFut =
                         calcExecutor.submit(new Callable<T2<Integer, IndexIntegrityCheckIssue>>() {
                             @Override public T2<Integer, IndexIntegrityCheckIssue> call() throws Exception {
-                                IndexIntegrityCheckIssue issue = integrityCheckIndexPartition(grpCtx, cpFlag);
+                                IndexIntegrityCheckIssue issue = integrityCheckIndexPartition(grpCtx);
 
                                 return new T2<>(grpCtx.groupId(), issue);
                             }
                         });
 
-                    integrityCheckFutures.add(checkFut);
-                }
+                integrityCheckFutures.add(checkFut);
             }
 
             for (Future<T2<Integer, IndexIntegrityCheckIssue>> fut : integrityCheckFutures) {
@@ -452,23 +491,19 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
 
     /**
      * @param gctx Cache group context.
-     * @param cpFlag Checkpoint status flag.
      */
-    private IndexIntegrityCheckIssue integrityCheckIndexPartition(CacheGroupContext gctx, AtomicBoolean cpFlag) {
+    private IndexIntegrityCheckIssue integrityCheckIndexPartition(CacheGroupContext gctx) {
         GridKernalContext ctx = ignite.context();
         GridCacheSharedContext cctx = ctx.cache().context();
 
         try {
             FilePageStoreManager pageStoreMgr = (FilePageStoreManager)cctx.pageStore();
 
-            IdleVerifyUtility.checkPartitionsPageCrcSum(pageStoreMgr, gctx, INDEX_PARTITION, FLAG_IDX, cpFlag);
+            IdleVerifyUtility.checkPartitionsPageCrcSum(pageStoreMgr, gctx, INDEX_PARTITION, FLAG_IDX);
 
             return null;
         }
         catch (Throwable t) {
-            if (cpFlag.get())
-                throw new GridNotIdleException("Checkpoint with dirty pages started! Cluster not idle!", t);
-
             log.error("Integrity check of index partition of cache group " + gctx.cacheOrGroupName() + " failed", t);
 
             return new IndexIntegrityCheckIssue(gctx.cacheOrGroupName(), t);
@@ -484,14 +519,16 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
     /**
      * @param grpCtx Group context.
      * @param part Local partition.
+     * @param idleCheck Check idle state.
      */
     private Future<Map<PartitionKey, ValidateIndexesPartitionResult>> processPartitionAsync(
         final CacheGroupContext grpCtx,
-        final GridDhtLocalPartition part
+        final GridDhtLocalPartition part,
+        final Runnable idleCheck
     ) {
         return calcExecutor.submit(new Callable<Map<PartitionKey, ValidateIndexesPartitionResult>>() {
-            @Override public Map<PartitionKey, ValidateIndexesPartitionResult> call() throws Exception {
-                return processPartition(grpCtx, part);
+            @Override public Map<PartitionKey, ValidateIndexesPartitionResult> call() {
+                return processPartition(grpCtx, part, idleCheck);
             }
         });
     }
@@ -499,10 +536,12 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
     /**
      * @param grpCtx Group context.
      * @param part Local partition.
+     * @param idleCheck Check idle state.
      */
     private Map<PartitionKey, ValidateIndexesPartitionResult> processPartition(
         CacheGroupContext grpCtx,
-        GridDhtLocalPartition part
+        GridDhtLocalPartition part,
+        Runnable idleCheck
     ) {
         if (!part.reserve())
             return emptyMap();
@@ -647,6 +686,8 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
 
         processedPartitions.incrementAndGet();
 
+        idleCheck.run();
+
         return Collections.singletonMap(partKey, partRes);
     }
 
@@ -676,15 +717,20 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
     /**
      * @param ctx Context.
      * @param idx Index.
+     * @param idleCheck Check idle state.
      */
-    private Future<Map<String, ValidateIndexesPartitionResult>> processIndexAsync(GridCacheContext ctx, Index idx) {
+    private Future<Map<String, ValidateIndexesPartitionResult>> processIndexAsync(
+        GridCacheContext ctx,
+        Index idx,
+        Runnable idleCheck
+    ) {
         return calcExecutor.submit(new Callable<Map<String, ValidateIndexesPartitionResult>>() {
             /** {@inheritDoc} */
             @Override public Map<String, ValidateIndexesPartitionResult> call() {
                 BPlusTree.suspendFailureDiagnostic.set(true);
 
                 try {
-                    return processIndex(ctx, idx);
+                    return processIndex(ctx, idx, idleCheck);
                 }
                 finally {
                     BPlusTree.suspendFailureDiagnostic.set(false);
@@ -696,8 +742,13 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
     /**
      * @param ctx Context.
      * @param idx Index.
+     * @param idleCheck Check idle state.
      */
-    private Map<String, ValidateIndexesPartitionResult> processIndex(GridCacheContext ctx, Index idx) {
+    private Map<String, ValidateIndexesPartitionResult> processIndex(
+        GridCacheContext ctx,
+        Index idx,
+        Runnable idleCheck
+    ) {
         Object consId = ignite.context().discovery().localNode().consistentId();
 
         ValidateIndexesPartitionResult idxValidationRes = new ValidateIndexesPartitionResult(
@@ -773,7 +824,7 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
                     }
                 }
 
-                h2key = (KeyCacheObject)h2Row.key();
+                h2key = h2Row.key();
 
                 if (h2Row.link() != 0L) {
                     CacheDataRow cacheDataStoreRow = ctx.group().offheap().read(ctx, h2key);
@@ -814,6 +865,8 @@ public class ValidateIndexesClosure implements IgniteCallable<VisorValidateIndex
         processedIndexes.incrementAndGet();
 
         printProgressOfIndexValidationIfNeeded();
+
+        idleCheck.run();
 
         return Collections.singletonMap(uniqueIdxName, idxValidationRes);
     }
