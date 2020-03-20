@@ -329,6 +329,9 @@ public class CommonArgParser {
 
                         break;
 
+                    case CMD_PRINT_ERR_STACK_TRACE:
+                        break;
+
                     default:
                         throw new IllegalArgumentException("Unexpected argument: " + str);
                 }
