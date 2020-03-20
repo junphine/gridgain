@@ -26,11 +26,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.ignite.Ignite;
 import org.apache.ignite.IgniteCheckedException;
 import org.apache.ignite.internal.IgniteEx;
 import org.apache.ignite.internal.pagemem.PageIdAllocator;
 import org.apache.ignite.internal.pagemem.PageIdUtils;
 import org.apache.ignite.internal.processors.cache.CacheGroupContext;
+import org.apache.ignite.internal.processors.cache.DynamicCacheDescriptor;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtLocalPartition;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionState;
 import org.apache.ignite.internal.processors.cache.distributed.dht.topology.GridDhtPartitionTopology;
@@ -39,6 +41,8 @@ import org.apache.ignite.internal.processors.cache.persistence.IgniteCacheDataba
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStore;
 import org.apache.ignite.internal.processors.cache.persistence.file.FilePageStoreManager;
 import org.apache.ignite.internal.util.typedef.T2;
+import org.apache.ignite.internal.util.typedef.internal.SB;
+import org.apache.ignite.lang.IgniteBiInClosure;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -117,7 +121,7 @@ public class IdleVerifyUtility {
      *
      * @param ign Ignite instance.
      * @param grpIds Group Id`s.
-     * @return Counters info.
+     * @return Current group id`s and distribution partitions with update counters per group.
      */
     public static T2<Set<Integer>, Map<Integer, Set<Map.Entry<Integer, Long>>>> updCountersSnapshot(
         IgniteEx ign,
@@ -128,11 +132,13 @@ public class IdleVerifyUtility {
         for (Integer grpId : grpIds) {
             CacheGroupContext grpCtx = ign.context().cache().cacheGroup(grpId);
 
+            if (grpCtx == null)
+                throw new GridNotIdleException("Possibly rebalance in progress? Group not found: " + grpId);
+
             GridDhtPartitionTopology top = grpCtx.topology();
 
-            partsWithCountersPerGrp.putIfAbsent(grpId, new HashSet<>());
-
-            Set<Map.Entry<Integer, Long>> partsWithCounters = partsWithCountersPerGrp.get(grpId);
+            Set<Map.Entry<Integer, Long>> partsWithCounters =
+                partsWithCountersPerGrp.computeIfAbsent(grpId, k -> new HashSet<>());
 
             for (GridDhtLocalPartition part : top.currentLocalPartitions()) {
                 if (part.state() != GridDhtPartitionState.OWNING)
@@ -149,7 +155,7 @@ public class IdleVerifyUtility {
      * Compares two sets with partitions and upd counters per group distribution.
      *
      * @param ign Ignite instance.
-     * @param cntrsIn Set to compare.
+     * @param cntrsIn Group id`s with counters per partitions per groups distribution.
      * @return Diff with grpId info between two sets.
      */
     public static List<Integer> compareUpdCounters(
@@ -165,7 +171,7 @@ public class IdleVerifyUtility {
             Set<Map.Entry<Integer, Long>> partsWithCntrsCur = curCntrs.getValue().get(grp);
 
             if (partsWithCntrsCur == null)
-                throw new GridNotIdleException("Possibly reballance in progress? Group not found: " + grp);
+                throw new GridNotIdleException("Possibly rebalance in progress? Group not found: " + grp);
 
             Set<Map.Entry<Integer, Long>> partsWithCntrsIn = cntrsIn.getValue().get(grp);
 
@@ -174,6 +180,49 @@ public class IdleVerifyUtility {
         }
 
         return diff;
+    }
+
+    /**
+     * Idle checker.
+     */
+    public static class IdleChecker implements Runnable {
+        /** */
+        private final IgniteEx ig;
+
+        /** Group id`s snapshot with partitions and counters distrubution. */
+        private final T2<Set<Integer>, Map<Integer, Set<Map.Entry<Integer, Long>>>> partsWithCntrsPerGrp;
+
+        /** */
+        public IdleChecker(IgniteEx ig, T2<Set<Integer>, Map<Integer, Set<Map.Entry<Integer, Long>>>> partsWithCntrsPerGrp) {
+            this.ig = ig;
+            this.partsWithCntrsPerGrp = partsWithCntrsPerGrp;
+        }
+
+        /** {@inheritDoc} */
+        @Override public void run() {
+            List<Integer> diff = compareUpdCounters(ig, partsWithCntrsPerGrp);
+
+            SB sb = new SB();
+
+            if (!diff.isEmpty()) {
+                for (int grpId : diff) {
+                    if (sb.length() != 0)
+                        sb.a(", ");
+                    else
+                        sb.a("\"");
+
+                    DynamicCacheDescriptor desc = ig.context().cache().cacheDescriptor(grpId);
+
+                    CacheGroupContext grpCtx = ig.context().cache().cacheGroup(desc == null ? grpId : desc.groupId());
+
+                    sb.a(grpCtx.cacheOrGroupName());
+                }
+
+                sb.a("\"");
+
+                throw new GridNotIdleException(IDLE_DATA_ALTERATION_MSG + "[" + sb.toString() + "]");
+            }
+        }
     }
 
     /** */

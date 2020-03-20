@@ -256,35 +256,12 @@ public class VerifyBackupPartitionsTaskV2 extends ComputeTaskAdapter<VisorIdleVe
 
             completionCntr.set(0);
 
-            /** Update counters per partiton per group. */
+            /** Update counters per partition per group. */
             final T2<Set<Integer>, Map<Integer, Set<Map.Entry<Integer, Long>>>> partsWithCntrsPerGrp =
                 updCountersSnapshot(ignite, grpIds);
 
             List<Future<Map<PartitionKeyV2, PartitionHashRecordV2>>> partHashCalcFuts =
-                calcPartitionHashAsync(grpIds, new Runnable() {
-                    @Override public void run() {
-                        List<Integer> diff = compareUpdCounters(ignite, partsWithCntrsPerGrp);
-
-                        SB sb = new SB();
-
-                        if (!diff.isEmpty()) {
-                            for (int grpId : diff) {
-                                if (sb.length() != 0)
-                                    sb.a(", ");
-                                else
-                                    sb.a("\"");
-
-                                DynamicCacheDescriptor desc = ignite.context().cache().cacheDescriptor(grpId);
-
-                                sb.a(desc.cacheName());
-                            }
-
-                            sb.a("\"");
-
-                            throw new GridNotIdleException(IDLE_DATA_ALTERATION_MSG + "[" + sb.toString() + "]");
-                        }
-                    }
-                });
+                calcPartitionHashAsync(grpIds, new IdleVerifyUtility.IdleChecker(ignite, partsWithCntrsPerGrp));
 
             Map<PartitionKeyV2, PartitionHashRecordV2> res = new HashMap<>();
 
@@ -552,6 +529,8 @@ public class VerifyBackupPartitionsTaskV2 extends ComputeTaskAdapter<VisorIdleVe
             if (!part.reserve())
                 return emptyMap();
 
+            idleCheck.run();
+
             int partHash = 0;
             long partSize;
             long updateCntrBefore = part.updateCounter();
@@ -619,8 +598,6 @@ public class VerifyBackupPartitionsTaskV2 extends ComputeTaskAdapter<VisorIdleVe
             );
 
             completionCntr.incrementAndGet();
-
-            idleCheck.run();
 
             return Collections.singletonMap(partKey, partRec);
         }

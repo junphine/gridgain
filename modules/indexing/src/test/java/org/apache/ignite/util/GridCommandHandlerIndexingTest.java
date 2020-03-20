@@ -90,7 +90,7 @@ public class GridCommandHandlerIndexingTest extends GridCommandHandlerClusterPer
         String out = testOut.toString();
 
         assertContains(log, out, "Index validation failed");
-        assertContains(log, out, IDLE_DATA_ALTERATION_MSG);
+        assertContains(log, out, IDLE_DATA_ALTERATION_MSG + "[\"" + GROUP_NAME + "\"]");
     }
 
 
